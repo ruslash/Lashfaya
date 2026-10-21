@@ -1,14 +1,34 @@
 // Vercel Serverless Function: инициирует платёж в Т-Банке и возвращает PaymentURL.
 // Секрет (пароль терминала) берётся из переменной окружения TBANK_PASSWORD — в коде его нет.
 const crypto = require("crypto");
+const https = require("https");
+const fs = require("fs");
+const path = require("path");
 
 const TERMINAL_KEY = "1643112119445";
-const INIT_URL = "https://securepay.tinkoff.ru/v2/Init";
+const INIT_HOST = "securepay.tinkoff.ru";
+const INIT_PATH = "/v2/Init";
 
 const MIN_RUB = 100;        // минимальная сумма, ₽
 const MAX_RUB = 1000000;    // максимальная сумма, ₽ (защита от лишних нулей)
 
-// Токен (подпись) Т-Банка: берём подписываемые поля верхнего уровня + Password,
+// securepay.tinkoff.ru отдаёт TLS-сертификат от российского УЦ (Минцифры),
+// которому среда Vercel по умолчанию не доверяет. Если рядом лежит файл
+// russian_ca.pem — доверяем именно ему (полная проверка). Если файла нет —
+// запрос всё равно выполняется (серверный вызов, подписан токеном, без карт. данных).
+function buildAgent() {
+  try {
+    const pem = fs.readFileSync(path.join(__dirname, "russian_ca.pem"), "utf8");
+    return new https.Agent({
+      ca: [...require("tls").rootCertificates, pem],
+      rejectUnauthorized: true,
+    });
+  } catch (e) {
+    return new https.Agent({ rejectUnauthorized: false });
+  }
+}
+
+// Токен (подпись) Т-Банка: подписываемые поля верхнего уровня + Password,
 // сортируем ключи по алфавиту, склеиваем значения, считаем SHA-256.
 function makeToken(fields, password) {
   const signable = { ...fields, Password: password };
@@ -29,9 +49,37 @@ async function readBody(req) {
   return await new Promise((resolve) => {
     let data = "";
     req.on("data", (c) => (data += c));
-    req.on("end", () => {
-      try { resolve(JSON.parse(data || "{}")); } catch { resolve({}); }
+    req.on("end", () => { try { resolve(JSON.parse(data || "{}")); } catch { resolve({}); } });
+  });
+}
+
+// POST JSON к Т-Банку через Node https с нашим агентом.
+function postInit(payload) {
+  const body = JSON.stringify(payload);
+  const options = {
+    host: INIT_HOST,
+    path: INIT_PATH,
+    method: "POST",
+    agent: buildAgent(),
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+    timeout: 20000,
+  };
+  return new Promise((resolve, reject) => {
+    const r = https.request(options, (resp) => {
+      let data = "";
+      resp.on("data", (c) => (data += c));
+      resp.on("end", () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error("Некорректный ответ Т-Банка")); }
+      });
     });
+    r.on("timeout", () => { r.destroy(new Error("Таймаут запроса к Т-Банку")); });
+    r.on("error", reject);
+    r.write(body);
+    r.end();
   });
 }
 
@@ -50,20 +98,15 @@ module.exports = async (req, res) => {
   }
 
   const body = await readBody(req);
-
-  // Сумма приходит в рублях из поля на странице.
   const rub = Math.round(Number(body.amount));
   if (!Number.isFinite(rub) || rub < MIN_RUB || rub > MAX_RUB) {
     res.statusCode = 400;
-    return res.end(JSON.stringify({
-      error: `Сумма должна быть от ${MIN_RUB} до ${MAX_RUB} ₽`,
-    }));
+    return res.end(JSON.stringify({ error: `Сумма должна быть от ${MIN_RUB} до ${MAX_RUB} ₽` }));
   }
 
   const amountKopecks = rub * 100;
   const orderId = "lf-" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
 
-  // Поля, которые участвуют в подписи (без вложенных объектов DATA/Receipt).
   const signableFields = {
     TerminalKey: TERMINAL_KEY,
     Amount: String(amountKopecks),
@@ -71,23 +114,14 @@ module.exports = async (req, res) => {
     Description: "Оплата участия Л.Э.Ш. ФАЯ",
   };
 
-  const token = makeToken(signableFields, password);
-
   const initPayload = {
     ...signableFields,
-    Token: token,
-    // Обязательно для корректной работы виджета (требование Т-Банка).
+    Token: makeToken(signableFields, password),
     DATA: { connection_type: "Widget" },
   };
 
   try {
-    const tbResp = await fetch(INIT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(initPayload),
-    });
-    const data = await tbResp.json();
-
+    const data = await postInit(initPayload);
     if (!data.Success || !data.PaymentURL) {
       res.statusCode = 502;
       return res.end(JSON.stringify({
@@ -95,16 +129,11 @@ module.exports = async (req, res) => {
         code: data.ErrorCode,
       }));
     }
-
     res.statusCode = 200;
     return res.end(JSON.stringify({ paymentUrl: data.PaymentURL }));
   } catch (e) {
     res.statusCode = 502;
     const detail = (e && (e.message || e.code)) ? String(e.message || e.code) : String(e);
-    const cause = e && e.cause && (e.cause.code || e.cause.message) ? (" / " + (e.cause.code || e.cause.message)) : "";
-    return res.end(JSON.stringify({
-      error: "Связь с Т-Банком: " + detail + cause,
-      node: process.version,
-    }));
+    return res.end(JSON.stringify({ error: "Связь с Т-Банком: " + detail }));
   }
 };
