@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/init.js": {
+      "includeFiles": "api/russian_ca.pem"
+    }
+  }
+}
