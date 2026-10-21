@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
     return res.end(JSON.stringify({ error: "Method not allowed" }));
   }
 
-  const password = process.env.TBANK_PASSWORD;
+  const password = (process.env.TBANK_PASSWORD || "").trim();
   if (!password) {
     res.statusCode = 500;
     return res.end(JSON.stringify({ error: "TBANK_PASSWORD не настроен на сервере" }));

@@ -57,11 +57,16 @@
   #paymentContainer{min-height:60px;}
 
   .note{text-align:center; font-size:12.5px; color:var(--muted); letter-spacing:.02em;}
-  .err{text-align:center; font-size:13px; color:#ff9a8a;}
   .status{
     text-align:center; font-size:12.5px; color:var(--muted);
-    border:1px dashed var(--line); border-radius:10px; padding:10px 12px;
-    line-height:1.5;
+    border:1px dashed var(--line); border-radius:10px; padding:10px 12px; line-height:1.5;
+  }
+  .status.bad{color:#ff9a8a; border-color:rgba(255,120,100,.5);}
+  .status.good{color:#9fe6b4; border-color:rgba(120,230,160,.4);}
+  .paylink{
+    display:none; text-align:center; text-decoration:none;
+    padding:16px; border-radius:12px; background:linear-gradient(180deg,var(--cream-hi),var(--cream));
+    color:var(--ink); font-family:"Playfair Display",serif; font-weight:700; font-size:18px;
   }
 </style>
 </head>
@@ -81,8 +86,8 @@
       </div>
 
       <div id="paymentContainer"></div>
+      <a class="paylink" id="paylink" href="#" rel="noopener">Перейти к оплате СБП →</a>
 
-      <div class="err" id="err"></div>
       <div class="status" id="status">Загрузка формы оплаты…</div>
       <div class="note">Оплата через Систему быстрых платежей (СБП)</div>
 
@@ -91,70 +96,74 @@
 </div>
 
 <script>
-  var errEl = document.getElementById("err");
   var statusEl = document.getElementById("status");
   var amountEl = document.getElementById("amount");
   var containerEl = document.getElementById("paymentContainer");
+  var paylinkEl = document.getElementById("paylink");
   var MIN_RUB = 100, MAX_RUB = 1000000;
 
-  function showErr(msg){ errEl.textContent = msg || ""; }
-  function showStatus(msg){ statusEl.textContent = msg || ""; statusEl.hidden = !msg; }
+  function showStatus(msg, kind){
+    statusEl.textContent = msg || "";
+    statusEl.hidden = !msg;
+    statusEl.className = "status" + (kind ? " " + kind : "");
+  }
 
   function onPaymentIntegrationLoad() {
     if (typeof PaymentIntegration === "undefined") {
-      showStatus("❌ Скрипт оплаты integration.js не загрузился. Проверьте, что сайт по HTTPS и домены Т-Банка не заблокированы.");
+      showStatus("❌ Скрипт оплаты integration.js не загрузился.", "bad");
       return;
     }
-
-    var initConfig = {
-      terminalKey: "1643112119445",
-      product: "eacq",
-      features: { payment: {} }
-    };
-
-    showStatus("Инициализация виджета Т-Банка…");
+    var initConfig = { terminalKey: "1643112119445", product: "eacq", features: { payment: {} } };
+    showStatus("Инициализация виджета…");
 
     PaymentIntegration.init(initConfig)
       .then(async function (integration) {
-        showStatus("Создание блока оплаты…");
         var main = await integration.payments.create("lashfaya-sbp", {});
         await main.mount(containerEl);
 
         await integration.payments.setPaymentStartCallback(async function () {
-          showErr("");
+          paylinkEl.style.display = "none";
           var rub = Math.round(Number(amountEl.value));
           if (!isFinite(rub) || rub < MIN_RUB || rub > MAX_RUB) {
-            showErr("Введите сумму от " + MIN_RUB + " до " + MAX_RUB + " ₽");
+            showStatus("Введите сумму от " + MIN_RUB + " до " + MAX_RUB + " ₽", "bad");
             throw new Error("invalid amount");
           }
-          var res = await new PaymentIntegration.Helpers().request("/api/init", "POST", { amount: rub });
+          showStatus("Создаём платёж…");
+          var res;
+          try {
+            res = await new PaymentIntegration.Helpers().request("/api/init", "POST", { amount: rub });
+          } catch (e) {
+            showStatus("❌ Сервер оплаты не ответил: " + (e && e.message ? e.message : e), "bad");
+            throw e;
+          }
           if (!res || !res.paymentUrl) {
-            showErr((res && res.error) ? res.error : "Не удалось создать платёж");
+            var msg = (res && res.error) ? res.error : "нет paymentUrl";
+            var code = (res && res.code) ? (" (код " + res.code + ")") : "";
+            showStatus("❌ Банк отклонил платёж: " + msg + code, "bad");
             throw new Error("init failed");
           }
+          // Успех: показываем запасную ссылку и отдаём URL виджету.
+          paylinkEl.href = res.paymentUrl;
+          paylinkEl.style.display = "block";
+          showStatus("✅ Платёж создан. Если оплата не открылась сама — нажмите кнопку «Перейти к оплате СБП».", "good");
           return res.paymentUrl;
         });
 
         await main.updateWidgetTypes(["sbp"]);
-
         try {
-          await main.updateDisplayParams({
-            gap: 0.375, hight: 3.5, radius: 0.75,
-            theme: { default: "accent" }
-          });
+          await main.updateDisplayParams({ gap: 0.375, hight: 3.5, radius: 0.75, theme: { default: "accent" } });
         } catch (e) {}
 
-        // Проверяем, появилась ли кнопка внутри контейнера.
         setTimeout(function () {
           if (containerEl.childElementCount === 0 || containerEl.offsetHeight < 20) {
-            showStatus("⚠️ Виджет загрузился, но кнопка СБП не появилась. Скорее всего, СБП не включён на терминале. В личном кабинете эквайринга: Магазины → Приём оплаты → Кнопки быстрой оплаты → Настроить → включить СБП.");
+            showStatus("⚠️ Кнопка СБП не появилась — проверьте, включён ли СБП на терминале.", "bad");
           } else {
             showStatus("");
           }
         }, 2500);
       })
       .catch(function (e) {
-        showStatus("❌ Ошибка инициализации: " + (e && e.message ? e.message : e) + ". Возможная причина: неверный TerminalKey для виджета или способ оплаты не активирован.");
+        showStatus("❌ Ошибка инициализации: " + (e && e.message ? e.message : e), "bad");
       });
   }
   window.onPaymentIntegrationLoad = onPaymentIntegrationLoad;
