@@ -129,15 +129,21 @@
             throw new Error("invalid amount");
           }
           showStatus("Создаём платёж…");
-          var res;
+          var res = null, httpStatus = 0;
           try {
-            res = await new PaymentIntegration.Helpers().request("/api/init", "POST", { amount: rub });
+            var resp = await fetch("/api/init", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ amount: rub })
+            });
+            httpStatus = resp.status;
+            res = await resp.json().catch(function () { return null; });
           } catch (e) {
-            showStatus("❌ Сервер оплаты не ответил: " + (e && e.message ? e.message : e), "bad");
+            showStatus("❌ Сеть недоступна: " + (e && e.message ? e.message : e), "bad");
             throw e;
           }
           if (!res || !res.paymentUrl) {
-            var msg = (res && res.error) ? res.error : "нет paymentUrl";
+            var msg = (res && res.error) ? res.error : ("HTTP " + httpStatus);
             var code = (res && res.code) ? (" (код " + res.code + ")") : "";
             showStatus("❌ Банк отклонил платёж: " + msg + code, "bad");
             throw new Error("init failed");
