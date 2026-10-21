@@ -65,7 +65,7 @@ function postInit(payload) {
       "Content-Type": "application/json",
       "Content-Length": Buffer.byteLength(body),
     },
-    timeout: 20000,
+    timeout: 12000,
   };
   return new Promise((resolve, reject) => {
     const r = https.request(options, (resp) => {
@@ -76,7 +76,7 @@ function postInit(payload) {
         catch (e) { reject(new Error("Некорректный ответ Т-Банка")); }
       });
     });
-    r.on("timeout", () => { r.destroy(new Error("Таймаут запроса к Т-Банку")); });
+    r.setTimeout(12000, () => { r.destroy(new Error("Т-Банк не ответил вовремя (таймаут)")); });
     r.on("error", reject);
     r.write(body);
     r.end();
