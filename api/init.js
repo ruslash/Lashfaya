@@ -100,6 +100,11 @@ module.exports = async (req, res) => {
     return res.end(JSON.stringify({ paymentUrl: data.PaymentURL }));
   } catch (e) {
     res.statusCode = 502;
-    return res.end(JSON.stringify({ error: "Ошибка связи с Т-Банком" }));
+    const detail = (e && (e.message || e.code)) ? String(e.message || e.code) : String(e);
+    const cause = e && e.cause && (e.cause.code || e.cause.message) ? (" / " + (e.cause.code || e.cause.message)) : "";
+    return res.end(JSON.stringify({
+      error: "Связь с Т-Банком: " + detail + cause,
+      node: process.version,
+    }));
   }
 };
