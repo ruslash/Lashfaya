@@ -49,8 +49,7 @@
     width:100%; padding:18px 44px 18px 18px; border-radius:13px;
     background:rgba(0,0,0,.55); border:1px solid var(--line); color:var(--fg);
     font-family:"Playfair Display",Georgia,serif; font-size:24px; font-weight:700;
-    letter-spacing:.01em; outline:none;
-    font-variant-numeric:tabular-nums;
+    letter-spacing:.01em; outline:none; font-variant-numeric:tabular-nums;
   }
   #amount::placeholder{color:#6f6056; font-weight:600;}
   #amount:focus{border-color:var(--cream);}
@@ -58,10 +57,12 @@
   #paymentContainer{min-height:60px;}
 
   .note{text-align:center; font-size:12.5px; color:var(--muted); letter-spacing:.02em;}
-  .err{
-    text-align:center; font-size:13px; color:#ff9a8a; min-height:0;
+  .err{text-align:center; font-size:13px; color:#ff9a8a;}
+  .status{
+    text-align:center; font-size:12.5px; color:var(--muted);
+    border:1px dashed var(--line); border-radius:10px; padding:10px 12px;
+    line-height:1.5;
   }
-  .loading{text-align:center; font-size:13px; color:var(--muted);}
 </style>
 </head>
 <body>
@@ -82,6 +83,7 @@
       <div id="paymentContainer"></div>
 
       <div class="err" id="err"></div>
+      <div class="status" id="status">Загрузка формы оплаты…</div>
       <div class="note">Оплата через Систему быстрых платежей (СБП)</div>
 
     </div>
@@ -90,25 +92,34 @@
 
 <script>
   var errEl = document.getElementById("err");
+  var statusEl = document.getElementById("status");
   var amountEl = document.getElementById("amount");
+  var containerEl = document.getElementById("paymentContainer");
   var MIN_RUB = 100, MAX_RUB = 1000000;
 
   function showErr(msg){ errEl.textContent = msg || ""; }
+  function showStatus(msg){ statusEl.textContent = msg || ""; statusEl.hidden = !msg; }
 
   function onPaymentIntegrationLoad() {
+    if (typeof PaymentIntegration === "undefined") {
+      showStatus("❌ Скрипт оплаты integration.js не загрузился. Проверьте, что сайт по HTTPS и домены Т-Банка не заблокированы.");
+      return;
+    }
+
     var initConfig = {
       terminalKey: "1643112119445",
       product: "eacq",
       features: { payment: {} }
     };
 
+    showStatus("Инициализация виджета Т-Банка…");
+
     PaymentIntegration.init(initConfig)
       .then(async function (integration) {
+        showStatus("Создание блока оплаты…");
         var main = await integration.payments.create("lashfaya-sbp", {});
-        var container = document.getElementById("paymentContainer");
-        await main.mount(container);
+        await main.mount(containerEl);
 
-        // В момент нажатия кнопки СБП — спрашиваем сумму и идём на наш бэкенд за paymentUrl.
         await integration.payments.setPaymentStartCallback(async function () {
           showErr("");
           var rub = Math.round(Number(amountEl.value));
@@ -124,23 +135,31 @@
           return res.paymentUrl;
         });
 
-        // Только СБП.
         await main.updateWidgetTypes(["sbp"]);
 
-        // Внешний вид кнопки.
         try {
           await main.updateDisplayParams({
             gap: 0.375, hight: 3.5, radius: 0.75,
             theme: { default: "accent" }
           });
         } catch (e) {}
+
+        // Проверяем, появилась ли кнопка внутри контейнера.
+        setTimeout(function () {
+          if (containerEl.childElementCount === 0 || containerEl.offsetHeight < 20) {
+            showStatus("⚠️ Виджет загрузился, но кнопка СБП не появилась. Скорее всего, СБП не включён на терминале. В личном кабинете эквайринга: Магазины → Приём оплаты → Кнопки быстрой оплаты → Настроить → включить СБП.");
+          } else {
+            showStatus("");
+          }
+        }, 2500);
       })
-      .catch(function () {
-        showErr("Не удалось загрузить оплату. Обновите страницу.");
+      .catch(function (e) {
+        showStatus("❌ Ошибка инициализации: " + (e && e.message ? e.message : e) + ". Возможная причина: неверный TerminalKey для виджета или способ оплаты не активирован.");
       });
   }
   window.onPaymentIntegrationLoad = onPaymentIntegrationLoad;
 </script>
-<script src="https://integrationjs.t-static.ru/integration.js" onload="onPaymentIntegrationLoad()" async></script>
+<script src="https://integrationjs.t-static.ru/integration.js" onload="onPaymentIntegrationLoad()" async
+        onerror="document.getElementById('status').textContent='❌ Не удалось загрузить integration.js с серверов Т-Банка.'"></script>
 </body>
 </html>
