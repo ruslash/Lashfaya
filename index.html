@@ -53,6 +53,13 @@
   }
   #amount::placeholder{color:#6f6056; font-weight:600;}
   #amount:focus{border-color:var(--cream);}
+  #contact{
+    width:100%; padding:15px 16px; border-radius:13px;
+    background:rgba(0,0,0,.55); border:1px solid var(--line); color:var(--fg);
+    font-family:"Montserrat",system-ui,sans-serif; font-size:16px; outline:none;
+  }
+  #contact::placeholder{color:#6f6056;}
+  #contact:focus{border-color:var(--cream);}
 
   #paymentContainer{min-height:60px;}
 
@@ -85,6 +92,12 @@
         </div>
       </div>
 
+      <div class="field">
+        <label for="contact">Email для чека</label>
+        <input id="contact" type="email" inputmode="email"
+               placeholder="example@mail.ru" autocomplete="off">
+      </div>
+
       <div id="paymentContainer"></div>
       <a class="paylink" id="paylink" href="#" rel="noopener">Перейти к оплате СБП →</a>
 
@@ -98,6 +111,7 @@
 <script>
   var statusEl = document.getElementById("status");
   var amountEl = document.getElementById("amount");
+  var contactEl = document.getElementById("contact");
   var containerEl = document.getElementById("paymentContainer");
   var paylinkEl = document.getElementById("paylink");
   var MIN_RUB = 100, MAX_RUB = 1000000;
@@ -128,13 +142,19 @@
             showStatus("Введите сумму от " + MIN_RUB + " до " + MAX_RUB + " ₽", "bad");
             throw new Error("invalid amount");
           }
+          var contact = (contactEl.value || "").trim();
+          var okEmail = contact.indexOf("@") > 0 && contact.indexOf(".") > contact.indexOf("@");
+          if (!okEmail) {
+            showStatus("Введите корректный email для чека", "bad");
+            throw new Error("invalid contact");
+          }
           showStatus("Создаём платёж…");
           var res = null, httpStatus = 0;
           try {
             var resp = await fetch("/api/init", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ amount: rub })
+              body: JSON.stringify({ amount: rub, contact: contact })
             });
             httpStatus = resp.status;
             res = await resp.json().catch(function () { return null; });

@@ -104,6 +104,23 @@ module.exports = async (req, res) => {
     return res.end(JSON.stringify({ error: `Сумма должна быть от ${MIN_RUB} до ${MAX_RUB} ₽` }));
   }
 
+  // Контакт покупателя для чека (онлайн-касса, 54-ФЗ): email или телефон.
+  const contact = String(body.contact || "").trim();
+  let receiptEmail = null, receiptPhone = null;
+  if (contact.includes("@")) {
+    receiptEmail = contact;
+  } else {
+    const digits = contact.replace(/\D/g, "");
+    let norm = digits;
+    if (digits.length === 11 && (digits[0] === "8" || digits[0] === "7")) norm = "7" + digits.slice(1);
+    else if (digits.length === 10) norm = "7" + digits;
+    if (norm.length === 11) receiptPhone = "+" + norm;
+  }
+  if (!receiptEmail && !receiptPhone) {
+    res.statusCode = 400;
+    return res.end(JSON.stringify({ error: "Укажите email или телефон для чека" }));
+  }
+
   const amountKopecks = rub * 100;
   const orderId = "lf-" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
 
@@ -111,13 +128,31 @@ module.exports = async (req, res) => {
     TerminalKey: TERMINAL_KEY,
     Amount: String(amountKopecks),
     OrderId: orderId,
-    Description: "Оплата участия Л.Э.Ш. ФАЯ",
+    Description: "Конференция Лэшфая 2027 Москва",
   };
+
+  const receipt = {
+    Taxation: "patent",
+    Items: [
+      {
+        Name: "Конференция Лэшфая 2027 Москва",
+        Price: amountKopecks,
+        Quantity: 1,
+        Amount: amountKopecks,
+        Tax: "none",
+        PaymentMethod: "full_payment",
+        PaymentObject: "service",
+      },
+    ],
+  };
+  if (receiptEmail) receipt.Email = receiptEmail;
+  if (receiptPhone) receipt.Phone = receiptPhone;
 
   const initPayload = {
     ...signableFields,
     Token: makeToken(signableFields, password),
     DATA: { connection_type: "Widget" },
+    Receipt: receipt,
   };
 
   try {
