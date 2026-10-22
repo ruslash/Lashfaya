@@ -125,7 +125,7 @@ module.exports = async (req, res) => {
     if (!data.Success || !data.PaymentURL) {
       res.statusCode = 502;
       return res.end(JSON.stringify({
-        error: data.Message || data.Details || "Не удалось создать платёж",
+        error: [data.Message, data.Details].filter(Boolean).join(" — ") || "Не удалось создать платёж",
         code: data.ErrorCode,
       }));
     }
