@@ -1,9 +1,0 @@
-{
-  "regions": ["fra1"],
-  "functions": {
-    "api/init.js": {
-      "includeFiles": "api/russian_ca.pem",
-      "maxDuration": 30
-    }
-  }
-}
